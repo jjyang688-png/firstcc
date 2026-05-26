@@ -1,0 +1,55 @@
+/*
+ * Device tree fragments for imx6ull_drv_demo drivers
+ *
+ * Include this file in the main board device tree, e.g.:
+ *   arch/arm/boot/dts/imx6ull-alientek-emmc.dts
+ *
+ *   #include "imx6ull-custom.dtsi"
+ *
+ * Adjust GPIO pins and I2C bus numbers to match your hardware.
+ */
+
+/ {
+    /* ---- comp_drv: Composite LED driver ---- */
+    comp_drv_dev {
+        compatible = "alientek,comp-drv";
+        /*
+         * LED GPIO: GPIO1_IO03 on ALPHA board.
+         * Change to match your board's LED pin.
+         */
+        led-gpios = <&gpio1 3 GPIO_ACTIVE_LOW>;
+        status = "okay";
+    };
+
+    /* ---- key_input: Key input driver ---- */
+    key_input_dev {
+        compatible = "alientek,key-input";
+        /*
+         * Key GPIO: connect key between this pin and GND.
+         * GPIO1_IO18 shown as example.
+         */
+        key-gpios = <&gpio1 18 GPIO_ACTIVE_LOW>;
+        key-code = <28>;        /* KEY_ENTER */
+        debounce-interval = <20>; /* milliseconds */
+        status = "okay";
+    };
+};
+
+/*
+ * ---- AP3216C: I2C light/proximity sensor ----
+ * Add this node under the appropriate I2C controller.
+ *
+ * For i.MX6ULL, typically I2C1 is on pins UART4_TXD/RXD.
+ * Check which I2C bus your AP3216C is connected to.
+ *
+ * Example - add inside &i2c1 { ... } in your board dts:
+ *
+ * &i2c1 {
+ *     ap3216c@1e {
+ *         compatible = "alientek,ap3216c";
+ *         reg = <0x1e>;
+ *     };
+ * };
+ *
+ * The driver also matches "liteon,ap3216c" if your kernel has it.
+ */
