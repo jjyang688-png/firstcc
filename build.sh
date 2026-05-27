@@ -90,12 +90,18 @@ main() {
     echo "  modprobe comp_drv"
     echo "  modprobe key_input"
     echo "  modprobe ap3216c"
+    echo "  modprobe icm20608"
+    echo "  modprobe uart_sensor"
+    echo "  modprobe sys_monitor"
     echo ""
     echo "  ./test_led_rw on"
     echo "  ./test_led_rw blink"
     echo "  ./test_key /dev/input/eventX"
     echo "  ./test_async &   # then run test_led_rw on"
     echo "  ./test_ap3216c"
+    echo "  ./test_icm20608"
+    echo "  ./test_uart read"
+    echo "  ./smart_monitor"
 }
 
 main "$@"

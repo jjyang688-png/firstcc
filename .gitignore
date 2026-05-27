@@ -13,6 +13,9 @@ app/test_poll
 app/test_async
 app/test_key
 app/test_ap3216c
+app/test_icm20608
+app/test_uart
+app/smart_monitor
 
 # Compiled device tree
 *.dtb

@@ -34,6 +34,10 @@
 #define AP3216C_ADDR  0x1E
 #define DEVICE_COUNT  1
 
+static int debug;
+module_param(debug, int, 0644);
+MODULE_PARM_DESC(debug, "Enable debug output");
+
 /* AP3216C registers */
 #define REG_SYS_CONF       0x00
 #define REG_IR_DATA_LOW    0x0A

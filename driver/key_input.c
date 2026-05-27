@@ -29,9 +29,22 @@
 #include <linux/slab.h>
 #include <linux/jiffies.h>
 #include <linux/timer.h>
+#include <linux/debugfs.h>
 
 #define KEY_DRV_NAME "key_input"
 #define DEFAULT_DEBOUNCE_MS 20
+
+/* ---- Module parameters (Ch64) ---- */
+static int default_debounce = DEFAULT_DEBOUNCE_MS;
+module_param(default_debounce, int, 0644);
+MODULE_PARM_DESC(default_debounce, "Key debounce time in milliseconds");
+
+static int default_keycode = KEY_ENTER;
+module_param(default_keycode, int, 0644);
+MODULE_PARM_DESC(default_keycode, "Default key code (e.g. 28=KEY_ENTER)");
+
+/* ---- Debugfs ---- */
+static struct dentry *key_dbg_dir;
 
 /* ---- Device structure ---- */
 struct key_dev {
@@ -45,6 +58,7 @@ struct key_dev {
     spinlock_t lock;                  /* Ch47: protect data shared with irq */
     struct delayed_work work;         /* Ch60: bottom-half debounce work */
     bool last_state;                  /* Track to detect edges */
+    unsigned long irq_count;          /* Interrupt counter (for debugfs) */
 };
 
 static struct key_dev *g_key_dev;
@@ -83,6 +97,8 @@ static irqreturn_t key_irq_handler(int irq, void *data)
 {
     struct key_dev *dev = data;
 
+    dev->irq_count++;   /* Track for debugfs */
+
     /* Schedule debounce work - bottom half (Ch60) */
     schedule_delayed_work(&dev->work,
                           msecs_to_jiffies(dev->debounce_ms));
@@ -119,14 +135,14 @@ static int key_input_probe(struct platform_device *pdev)
     /* Read key code from device tree, default to KEY_ENTER */
     ret = of_property_read_u32(d->of_node, "key-code", &key_code);
     if (ret)
-        key_code = KEY_ENTER;
+        key_code = default_keycode;
     dev->key_code = key_code;
 
     /* Read debounce time from device tree */
     ret = of_property_read_u32(d->of_node, "debounce-interval",
                                &dev->debounce_ms);
     if (ret)
-        dev->debounce_ms = DEFAULT_DEBOUNCE_MS;
+        dev->debounce_ms = default_debounce;
 
     dev->last_state = gpiod_get_value(dev->key_gpio);
 
@@ -173,6 +189,19 @@ static int key_input_probe(struct platform_device *pdev)
         return ret;
     }
 
+    /* Ch66: create debugfs entries */
+    key_dbg_dir = debugfs_create_dir(KEY_DRV_NAME, NULL);
+    if (!IS_ERR_OR_NULL(key_dbg_dir)) {
+        debugfs_create_u32("debounce_ms", 0444, key_dbg_dir,
+                           (u32 *)&dev->debounce_ms);
+        debugfs_create_u32("key_code", 0444, key_dbg_dir,
+                           (u32 *)&dev->key_code);
+        debugfs_create_ulong("irq_count", 0444, key_dbg_dir,
+                             &dev->irq_count);
+        debugfs_create_u32("irq_num", 0444, key_dbg_dir,
+                           (u32 *)&dev->irq);
+    }
+
     dev_info(d, KEY_DRV_NAME " probed ok (irq=%d code=%d)\n",
              dev->irq, dev->key_code);
     return 0;
@@ -183,9 +212,11 @@ static int key_input_remove(struct platform_device *pdev)
 {
     struct key_dev *dev = platform_get_drvdata(pdev);
 
+    debugfs_remove_recursive(key_dbg_dir);
     cancel_delayed_work_sync(&dev->work);
 
-    dev_info(&pdev->dev, KEY_DRV_NAME " removed\n");
+    dev_info(&pdev->dev, KEY_DRV_NAME " removed (irq_count=%lu)\n",
+             dev->irq_count);
     return 0;
 }
 

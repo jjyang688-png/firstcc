@@ -12,7 +12,7 @@
 
 KERNEL_DIR ?= /home/alientek/linux/imx6ull
 
-obj-m := comp_drv.o key_input.o ap3216c.o
+obj-m := comp_drv.o key_input.o ap3216c.o icm20608.o uart_sensor.o sys_monitor.o
 
 all:
 	$(MAKE) -C $(KERNEL_DIR) M=$(CURDIR) modules

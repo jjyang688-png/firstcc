@@ -34,11 +34,25 @@
 #include <linux/timer.h>
 #include <linux/jiffies.h>
 #include <linux/atomic.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
 #include "comp_drv.h"
 
 #define DRV_NAME         "comp_drv"
 #define DEVICE_COUNT     1
 #define DEFAULT_BLINK_MS 500
+
+/* ---- Module parameters (Ch64: module_param) ---- */
+static int default_blink_ms = DEFAULT_BLINK_MS;
+module_param(default_blink_ms, int, 0644);
+MODULE_PARM_DESC(default_blink_ms, "Default LED blink period (ms)");
+
+static int debug;
+module_param(debug, int, 0644);
+MODULE_PARM_DESC(debug, "Enable debug output (0=off, 1=on)");
+
+/* ---- Debugfs root directory ---- */
+static struct dentry *comp_drv_debugfs_dir;
 
 /* ---- Device structure ---- */
 struct comp_dev {
@@ -286,6 +300,135 @@ static long comp_drv_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
     return ret;
 }
 
+/* ---- sysfs interface (Ch65) ---- */
+static ssize_t led_state_show(struct device *d, struct device_attribute *attr,
+                              char *buf)
+{
+    struct comp_dev *dev = g_comp_dev;
+    const char *state_str;
+
+    if (!dev) return -ENODEV;
+
+    switch (dev->led_state) {
+    case LED_OFF:   state_str = "off";   break;
+    case LED_ON:    state_str = "on";    break;
+    case LED_BLINK: state_str = "blink"; break;
+    default:        state_str = "unknown"; break;
+    }
+
+    return scnprintf(buf, PAGE_SIZE, "%s\n", state_str);
+}
+
+static ssize_t blink_period_show(struct device *d,
+                                 struct device_attribute *attr, char *buf)
+{
+    if (!g_comp_dev) return -ENODEV;
+    return scnprintf(buf, PAGE_SIZE, "%d\n", g_comp_dev->blink_period_ms);
+}
+
+static ssize_t blink_period_store(struct device *d,
+                                  struct device_attribute *attr,
+                                  const char *buf, size_t count)
+{
+    int val, ret;
+    if (!g_comp_dev) return -ENODEV;
+
+    ret = kstrtoint(buf, 10, &val);
+    if (ret || val <= 0) return -EINVAL;
+
+    g_comp_dev->blink_period_ms = val;
+    g_comp_dev->timer_period_ms = val / 2;
+    return count;
+}
+
+static ssize_t read_count_show(struct device *d,
+                               struct device_attribute *attr, char *buf)
+{
+    if (!g_comp_dev) return -ENODEV;
+    return scnprintf(buf, PAGE_SIZE, "%lu\n", g_comp_dev->read_count);
+}
+
+static ssize_t write_count_show(struct device *d,
+                                struct device_attribute *attr, char *buf)
+{
+    if (!g_comp_dev) return -ENODEV;
+    return scnprintf(buf, PAGE_SIZE, "%lu\n", g_comp_dev->write_count);
+}
+
+/*
+ * sysfs attribute macros:
+ *   DEVICE_ATTR(name, mode, show_fn, store_fn)
+ *
+ * mode: 0444 = read-only for everyone
+ *       0644 = read-write for owner, read for others
+ *
+ * These attributes appear at:
+ *   /sys/devices/platform/comp_drv.0/led_state
+ *   /sys/devices/platform/comp_drv.0/blink_period
+ *   /sys/devices/platform/comp_drv.0/read_count
+ *   /sys/devices/platform/comp_drv.0/write_count
+ */
+static DEVICE_ATTR(led_state,    0444, led_state_show, NULL);
+static DEVICE_ATTR(blink_period, 0644, blink_period_show, blink_period_store);
+static DEVICE_ATTR(read_count,   0444, read_count_show, NULL);
+static DEVICE_ATTR(write_count,  0444, write_count_show, NULL);
+
+static struct attribute *comp_drv_sysfs_attrs[] = {
+    &dev_attr_led_state.attr,
+    &dev_attr_blink_period.attr,
+    &dev_attr_read_count.attr,
+    &dev_attr_write_count.attr,
+    NULL,
+};
+ATTRIBUTE_GROUPS(comp_drv_sysfs);
+
+/* ---- debugfs interface (Ch66) ---- */
+static int debugfs_stats_show(struct seq_file *s, void *v)
+{
+    struct comp_dev *dev = s->private;
+    if (!dev) return 0;
+
+    seq_printf(s, "=== comp_drv Debug Statistics ===\n");
+    seq_printf(s, "LED state:        %d\n", dev->led_state);
+    seq_printf(s, "Blink period:     %d ms\n", dev->blink_period_ms);
+    seq_printf(s, "Timer period:     %d ms\n", dev->timer_period_ms);
+    seq_printf(s, "Open count:       %d\n", atomic_read(&dev->open_count));
+    seq_printf(s, "Read count:       %lu\n", dev->read_count);
+    seq_printf(s, "Write count:      %lu\n", dev->write_count);
+    seq_printf(s, "Fasync active:    %s\n", dev->fasync ? "yes" : "no");
+
+    return 0;
+}
+
+static int debugfs_stats_open(struct inode *inode, struct file *filp)
+{
+    return single_open(filp, debugfs_stats_show, inode->i_private);
+}
+
+static const struct file_operations debugfs_stats_fops = {
+    .owner   = THIS_MODULE,
+    .open    = debugfs_stats_open,
+    .read    = seq_read,
+    .llseek  = seq_lseek,
+    .release = single_release,
+};
+
+static void comp_drv_debugfs_init(struct comp_dev *dev)
+{
+    comp_drv_debugfs_dir = debugfs_create_dir(DRV_NAME, NULL);
+    if (IS_ERR_OR_NULL(comp_drv_debugfs_dir)) {
+        pr_warn(DRV_NAME ": failed to create debugfs dir\n");
+        return;
+    }
+
+    debugfs_create_file("stats", 0444, comp_drv_debugfs_dir,
+                        dev, &debugfs_stats_fops);
+    debugfs_create_atomic_t("open_count", 0444, comp_drv_debugfs_dir,
+                            &dev->open_count);
+    debugfs_create_u32("blink_period", 0444, comp_drv_debugfs_dir,
+                       (u32 *)&dev->blink_period_ms);
+}
+
 /* ---- Platform driver probe (Ch54/55) ---- */
 static int comp_drv_probe(struct platform_device *pdev)
 {
@@ -317,8 +460,8 @@ static int comp_drv_probe(struct platform_device *pdev)
 
     /* Ch51: initialize kernel timer (setup_timer for 4.1.x compat) */
     setup_timer(&dev->blink_timer, blink_timer_callback, (unsigned long)dev);
-    dev->blink_period_ms = DEFAULT_BLINK_MS;
-    dev->timer_period_ms = DEFAULT_BLINK_MS / 2;
+    dev->blink_period_ms = default_blink_ms;
+    dev->timer_period_ms = default_blink_ms / 2;
     dev->led_state       = LED_OFF;
 
     /* Ch42: allocate device number and add cdev */
@@ -351,6 +494,14 @@ static int comp_drv_probe(struct platform_device *pdev)
         goto err_device;
     }
 
+    /* Ch65: register sysfs attributes */
+    ret = sysfs_create_group(&d->kobj, &comp_drv_sysfs_group);
+    if (ret)
+        dev_warn(d, "failed to create sysfs group: %d\n", ret);
+
+    /* Ch66: create debugfs entries */
+    comp_drv_debugfs_init(dev);
+
     dev_info(d, DRV_NAME " probed ok (major=%d)\n", MAJOR(dev->dev_id));
     return 0;
 
@@ -370,6 +521,9 @@ static int comp_drv_remove(struct platform_device *pdev)
 
     del_timer_sync(&dev->blink_timer);
     gpiod_set_value(dev->led_gpio, 0);
+
+    debugfs_remove_recursive(comp_drv_debugfs_dir);
+    sysfs_remove_group(&pdev->dev.kobj, &comp_drv_sysfs_group);
 
     device_destroy(dev->class, dev->dev_id);
     class_destroy(dev->class);

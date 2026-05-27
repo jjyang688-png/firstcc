@@ -33,7 +33,90 @@
         debounce-interval = <20>; /* milliseconds */
         status = "okay";
     };
+
+    /* ---- sys_monitor: System monitor misc device ---- */
+    sys_monitor_dev {
+        compatible = "alientek,sys-monitor";
+        status = "okay";
+    };
+
+    /* ---- uart_sensor: UART serial sensor ---- */
+    uart_sensor_dev {
+        compatible = "alientek,uart-sensor";
+        /*
+         * UART configuration for the serial-connected sensor.
+         * In a real setup, this device would be connected to one
+         * of the i.MX6ULL UART ports (e.g., UART3 on GPIO1_IO16/17).
+         *
+         * Standard serial DT properties:
+         *   current-speed : baud rate (e.g. 9600, 115200)
+         *   data-bits     : 7 or 8 (default 8)
+         *   stop-bits     : 1 or 2 (default 1)
+         *   parity        : "none" (default) / "even" / "odd"
+         */
+        current-speed = <115200>;
+        baud = <115200>;         /* alias for current-speed */
+        status = "okay";
+    };
 };
+
+/*
+ * ---- ICM20608: SPI 6-axis sensor ----
+ *
+ * Add this node under the appropriate SPI controller.
+ *
+ * For i.MX6ULL, the SPI controllers are typically:
+ *   - ecspi1 on CSI_DATA04~07 pins
+ *   - ecspi2 on UART5_RXD/TXD/RTS/CTS pins
+ *
+ * Example - add inside &ecspi1 { ... } in your board dts:
+ *
+ * &ecspi1 {
+ *     fsl,spi-num-chipselects = <1>;
+ *     cs-gpios = <&gpio4 26 GPIO_ACTIVE_LOW>;       // Chip select pin
+ *     pinctrl-names = "default";
+ *     pinctrl-0 = <&pinctrl_ecspi1>;
+ *     status = "okay";
+ *
+ *     icm20608@0 {
+ *         compatible = "alientek,icm20608";
+ *         reg = <0>;                                // CS0
+ *         spi-max-frequency = <8000000>;            // 8 MHz
+ *         /*
+ *          * SPI mode:
+ *          *   spi-cpol : Clock Polarity (0=idle low, 1=idle high)
+ *          *   spi-cpha : Clock Phase (0=sample on leading, 1=on trailing)
+ *          *
+ *          *   Mode 0 (CPOL=0, CPHA=0) - default, ICM20608 uses this
+ *          *   Mode 1 (CPOL=0, CPHA=1)
+ *          *   Mode 2 (CPOL=1, CPHA=0)
+ *          *   Mode 3 (CPOL=1, CPHA=1)
+ *          */
+ *     };
+ * };
+ *
+ * The driver also matches "invensense,icm20608" if your kernel has it.
+ */
+
+/*
+ * ---- UART wiring note ----
+ *
+ * For UART-connected sensors (GPS, PM2.5, Bluetooth, etc.), the kernel
+ * already has a driver for the SoC's UART controller (imx.c).
+ * Userspace can directly use /dev/ttymxcX for serial communication.
+ *
+ * The uart_sensor driver in this project demonstrates the kernel-side
+ * architecture of managing a UART-connected device. In production:
+ *
+ *   - Use serdev (Documentation/driver-api/serial/serial-rs485.rst)
+ *     for kernel drivers that need to bind to serial ports.
+ *   - Or use userspace /dev/ttymxcX with standard termios settings.
+ *
+ * Reference TTY/serial layers:
+ *   drivers/tty/serial/imx.c        ← i.MX UART hardware driver
+ *   drivers/tty/serial/serial_core.c ← Serial core (uart_ops, uart_port)
+ *   drivers/tty/tty_io.c            ← TTY layer (tty_driver, line discipline)
+ */
 
 /*
  * ---- AP3216C: I2C light/proximity sensor ----
